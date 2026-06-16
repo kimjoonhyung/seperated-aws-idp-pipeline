@@ -111,7 +111,7 @@ async function parseSseStream(
     }
   } finally {
     // 조기 종료(complete) 시 미사용 스트림을 정리해 연결을 해제한다.
-    reader.cancel().catch(() => {});
+    reader.cancel().catch(() => undefined);
   }
 
   if (!completed && buffer) handleLine(buffer.replace(/\r$/, ''));
