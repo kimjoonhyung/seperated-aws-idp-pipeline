@@ -1,7 +1,7 @@
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import type {
-  APIGatewayRequestAuthorizerEventV2,
-  APIGatewaySimpleAuthorizerWithContextResult,
+  APIGatewayRequestAuthorizerEvent,
+  APIGatewayAuthorizerResult,
 } from 'aws-lambda';
 
 const verifier = CognitoJwtVerifier.create({
@@ -10,41 +10,54 @@ const verifier = CognitoJwtVerifier.create({
   clientId: process.env.USER_POOL_CLIENT_ID!,
 });
 
-interface AuthContext {
-  userSub: string;
-  username: string;
-  [key: string]: string;
-}
+/**
+ * Build an IAM policy result for the WebSocket $connect authorizer.
+ *
+ * WebSocket (API Gateway v2 WEBSOCKET) Lambda authorizers must return an IAM
+ * policy document — the HTTP-API "simple response" shape ({ isAuthorized })
+ * is silently rejected and the connection is denied.
+ */
+const policy = (
+  principalId: string,
+  effect: 'Allow' | 'Deny',
+  methodArn: string,
+  context: Record<string, string> = {},
+): APIGatewayAuthorizerResult => ({
+  principalId,
+  policyDocument: {
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Action: 'execute-api:Invoke',
+        Effect: effect,
+        Resource: methodArn,
+      },
+    ],
+  },
+  context,
+});
 
 /**
  * WebSocket $connect REQUEST authorizer.
  * Validates a Cognito access token passed as the `token` query string param.
  */
 export const authorizerHandler = async (
-  event: APIGatewayRequestAuthorizerEventV2,
-): Promise<APIGatewaySimpleAuthorizerWithContextResult<AuthContext>> => {
+  event: APIGatewayRequestAuthorizerEvent,
+): Promise<APIGatewayAuthorizerResult> => {
   const token = event.queryStringParameters?.token;
 
   if (!token) {
-    return {
-      isAuthorized: false,
-      context: { userSub: '', username: '' },
-    };
+    return policy('unauthorized', 'Deny', event.methodArn);
   }
 
   try {
     const claims = await verifier.verify(token);
-    return {
-      isAuthorized: true,
-      context: {
-        userSub: claims.sub,
-        username: (claims.username as string) ?? claims.sub,
-      },
-    };
+    const username = (claims.username as string) ?? claims.sub;
+    return policy(claims.sub, 'Allow', event.methodArn, {
+      userSub: claims.sub,
+      username,
+    });
   } catch {
-    return {
-      isAuthorized: false,
-      context: { userSub: '', username: '' },
-    };
+    return policy('unauthorized', 'Deny', event.methodArn);
   }
 };

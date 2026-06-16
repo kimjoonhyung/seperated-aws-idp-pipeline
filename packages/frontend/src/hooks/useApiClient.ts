@@ -65,6 +65,11 @@ async function parseSseStream(
   const decoder = new TextDecoder();
   let result = '';
   let buffer = '';
+  // 에이전트는 생성 종료 시 `complete` 이벤트를 보낸다. 이를 명시적 종료
+  // 신호로 사용한다 — HTTP 스트림이 곧바로 닫히지 않아도(AgentCore body가
+  // 늦게 닫히거나 프록시가 keep-alive 로 연결을 유지하는 경우) 클라이언트가
+  // 무한히 "작성중" 상태에 갇히지 않도록 한다.
+  let completed = false;
 
   const handleLine = (line: string) => {
     // SSE 주석(하트비트) 무시
@@ -78,27 +83,38 @@ async function parseSseStream(
       if (event.type === 'text' && typeof event.content === 'string') {
         result += event.content;
       }
+      if (event.type === 'complete') {
+        completed = true;
+      }
     } catch {
       // 파싱 실패 시 무시
     }
   };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
+      buffer += decoder.decode(value, { stream: true });
 
-    // SSE 이벤트는 빈 줄로 구분되지만, 단일 라인 data 프레임도 처리한다.
-    let newlineIdx: number;
-    while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, newlineIdx).replace(/\r$/, '');
-      buffer = buffer.slice(newlineIdx + 1);
-      handleLine(line);
+      // SSE 이벤트는 빈 줄로 구분되지만, 단일 라인 data 프레임도 처리한다.
+      let newlineIdx: number;
+      while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newlineIdx).replace(/\r$/, '');
+        buffer = buffer.slice(newlineIdx + 1);
+        handleLine(line);
+      }
+
+      // `complete` 수신 즉시 종료한다. 남은 transport close 를 기다리지 않는다.
+      if (completed) break;
     }
+  } finally {
+    // 조기 종료(complete) 시 미사용 스트림을 정리해 연결을 해제한다.
+    reader.cancel().catch(() => undefined);
   }
 
-  if (buffer) handleLine(buffer.replace(/\r$/, ''));
+  if (!completed && buffer) handleLine(buffer.replace(/\r$/, ''));
 
   return result;
 }
