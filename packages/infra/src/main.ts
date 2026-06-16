@@ -48,9 +48,17 @@ bdaStack.addDependency(eventStack);
 const transcribeStack = new TranscribeStack(app, 'IDP-V2-Transcribe', { env });
 transcribeStack.addDependency(eventStack);
 
+// Auth (Cognito) — publishes user pool id/client id to SSM.
+const authStack = new AuthStack(app, 'IDP-V2-Auth', { env });
+authStack.addDependency(storageStack);
+
 const websocketStack = new WebsocketStack(app, 'IDP-V2-Websocket', { env });
 websocketStack.addDependency(storageStack);
 websocketStack.addDependency(vpcStack);
+// Websocket reads the user pool id/client id from SSM (auth-stack publishes
+// them), so it must deploy after auth — otherwise parallel deploys race and
+// fail with "Unable to fetch parameters [/idp-v2/auth/...]".
+websocketStack.addDependency(authStack);
 
 const mcpStack = new McpStack(app, 'IDP-V2-Mcp', { env });
 mcpStack.addDependency(storageStack);
@@ -89,10 +97,6 @@ workflowStack.addDependency(webcrawlerStack);
 workflowStack.addDependency(agentStack);
 workflowStack.addDependency(lanceServiceStack);
 workflowStack.addDependency(vpcStack);
-
-// Auth (Cognito) — publishes user pool id/client id to SSM.
-const authStack = new AuthStack(app, 'IDP-V2-Auth', { env });
-authStack.addDependency(storageStack);
 
 // Backend — Fargate + HTTP API (JWT) + CloudFront SSE streaming.
 // Depends on auth (JWT config via SSM) and websocket (callback url via SSM).
