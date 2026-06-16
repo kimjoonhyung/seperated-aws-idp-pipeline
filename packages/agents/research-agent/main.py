@@ -50,6 +50,12 @@ async def invoke(request: dict):
             if event.get("complete"):
                 yield {"type": "complete"}
 
+        # Strands' stream_async does not emit an `event["complete"]` flag on
+        # finish, so the in-loop check above never fires. Emit a terminal
+        # event once the stream is exhausted so the SSE proxy / frontend can
+        # stop the "generating" state instead of waiting for transport close.
+        yield {"type": "complete"}
+
 
 if __name__ == "__main__":
     import logging

@@ -110,6 +110,12 @@ async def invoke(request: dict):
         async for event in stream:
             for filtered in filter_stream_event(event):
                 yield filtered
+        # Strands' stream_async does not emit an `event["complete"]` flag on
+        # finish, so the loop above never yields a terminal event. Emit one
+        # explicitly when the stream is exhausted so the SSE proxy / frontend
+        # can stop the "generating" state instead of waiting for the
+        # transport to close.
+        yield {"type": "complete"}
 
 
 if __name__ == "__main__":
