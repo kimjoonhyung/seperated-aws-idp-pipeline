@@ -1,0 +1,143 @@
+import { AuthStack } from './stacks/auth-stack.js';
+import { BackendStack } from './stacks/backend-stack.js';
+import { FrontendStack } from './stacks/frontend-stack.js';
+import { AgentStack } from './stacks/agent-stack.js';
+import { McpStack } from './stacks/mcp-stack.js';
+import { App } from ':idp-v2/common-constructs';
+import { StorageStack } from './stacks/storage-stack.js';
+import { EventStack } from './stacks/event-stack.js';
+import { BdaStack } from './stacks/bda-stack.js';
+import { OcrStack } from './stacks/ocr-stack.js';
+import { TranscribeStack } from './stacks/transcribe-stack.js';
+import { WorkflowStack } from './stacks/workflow-stack.js';
+import { VpcStack } from './stacks/vpc-stack.js';
+import { WorkerStack } from './stacks/worker-stack.js';
+import { WebcrawlerStack } from './stacks/webcrawler-stack.js';
+import { NeptuneStack } from './stacks/neptune-stack.js';
+import { WebsocketStack } from './stacks/websocket-stack.js';
+import { LanceServiceStack } from './stacks/lance-service-stack.js';
+
+const app = new App();
+
+const env = {
+  account: process.env.CDK_DEFAULT_ACCOUNT,
+  region: process.env.CDK_DEFAULT_REGION,
+};
+
+// ============================================================
+// [With Dependencies] - uncomment this block for production
+// ============================================================
+const vpcStack = new VpcStack(app, 'IDP-V2-Vpc', { env });
+
+const neptuneStack = new NeptuneStack(app, 'IDP-V2-Neptune', { env });
+neptuneStack.addDependency(vpcStack);
+
+const storageStack = new StorageStack(app, 'IDP-V2-Storage', { env });
+storageStack.addDependency(vpcStack);
+
+const eventStack = new EventStack(app, 'IDP-V2-Event', { env });
+eventStack.addDependency(storageStack);
+
+const ocrStack = new OcrStack(app, 'IDP-V2-Ocr', { env });
+ocrStack.addDependency(storageStack);
+ocrStack.addDependency(eventStack);
+
+const bdaStack = new BdaStack(app, 'IDP-V2-Bda', { env });
+bdaStack.addDependency(eventStack);
+
+const transcribeStack = new TranscribeStack(app, 'IDP-V2-Transcribe', { env });
+transcribeStack.addDependency(eventStack);
+
+const websocketStack = new WebsocketStack(app, 'IDP-V2-Websocket', { env });
+websocketStack.addDependency(storageStack);
+websocketStack.addDependency(vpcStack);
+
+const mcpStack = new McpStack(app, 'IDP-V2-Mcp', { env });
+mcpStack.addDependency(storageStack);
+mcpStack.addDependency(websocketStack);
+mcpStack.addDependency(vpcStack);
+
+const workerStack = new WorkerStack(app, 'IDP-V2-Worker', { env });
+workerStack.addDependency(storageStack);
+workerStack.addDependency(websocketStack);
+workerStack.addDependency(vpcStack);
+
+const agentStack = new AgentStack(app, 'IDP-V2-Agent', {
+  env,
+  gateway: mcpStack.gateway,
+});
+agentStack.addDependency(storageStack);
+agentStack.addDependency(mcpStack);
+
+const webcrawlerStack = new WebcrawlerStack(app, 'IDP-V2-Webcrawler', {
+  env,
+});
+webcrawlerStack.addDependency(eventStack);
+webcrawlerStack.addDependency(agentStack);
+
+const lanceServiceStack = new LanceServiceStack(app, 'IDP-V2-LanceService', {
+  env,
+});
+lanceServiceStack.addDependency(storageStack);
+
+const workflowStack = new WorkflowStack(app, 'IDP-V2-Workflow', { env });
+workflowStack.addDependency(storageStack);
+workflowStack.addDependency(eventStack);
+workflowStack.addDependency(neptuneStack);
+workflowStack.addDependency(ocrStack);
+workflowStack.addDependency(webcrawlerStack);
+workflowStack.addDependency(agentStack);
+workflowStack.addDependency(lanceServiceStack);
+workflowStack.addDependency(vpcStack);
+
+// Auth (Cognito) — publishes user pool id/client id to SSM.
+const authStack = new AuthStack(app, 'IDP-V2-Auth', { env });
+authStack.addDependency(storageStack);
+
+// Backend — Fargate + HTTP API (JWT) + CloudFront SSE streaming.
+// Depends on auth (JWT config via SSM) and websocket (callback url via SSM).
+const backendStack = new BackendStack(app, 'IDP-V2-Backend', {
+  env,
+  crossRegionReferences: true,
+});
+backendStack.addDependency(storageStack);
+backendStack.addDependency(agentStack);
+backendStack.addDependency(websocketStack);
+backendStack.addDependency(workflowStack);
+backendStack.addDependency(vpcStack);
+backendStack.addDependency(authStack);
+
+// Frontend — static website; consumes backend/auth/websocket via SSM.
+const frontendStack = new FrontendStack(app, 'IDP-V2-Frontend', {
+  env,
+  crossRegionReferences: true,
+});
+frontendStack.addDependency(authStack);
+frontendStack.addDependency(backendStack);
+frontendStack.addDependency(websocketStack);
+
+// ============================================================
+// [Without Dependencies] - for independent stack deployment (dev)
+// ============================================================
+// new VpcStack(app, 'IDP-V2-Vpc', { env });
+// new NeptuneStack(app, 'IDP-V2-Neptune', { env });
+// new StorageStack(app, 'IDP-V2-Storage', { env });
+// new EventStack(app, 'IDP-V2-Event', { env });
+// new OcrStack(app, 'IDP-V2-Ocr', { env });
+// new BdaStack(app, 'IDP-V2-Bda', { env });
+// new TranscribeStack(app, 'IDP-V2-Transcribe', { env });
+// new WorkflowStack(app, 'IDP-V2-Workflow', { env });
+// new WebsocketStack(app, 'IDP-V2-Websocket', { env });
+// const mcpStack = new McpStack(app, 'IDP-V2-Mcp', { env });
+// new WorkerStack(app, 'IDP-V2-Worker', { env });
+// new AgentStack(app, 'IDP-V2-Agent', {
+//   env,
+//   gateway: mcpStack.gateway,
+// });
+// new LanceServiceStack(app, 'IDP-V2-LanceService', { env });
+// new WebcrawlerStack(app, 'IDP-V2-Webcrawler', { env });
+// new AuthStack(app, 'IDP-V2-Auth', { env });
+// new BackendStack(app, 'IDP-V2-Backend', { env, crossRegionReferences: true });
+// new FrontendStack(app, 'IDP-V2-Frontend', { env, crossRegionReferences: true });
+
+app.synth();
